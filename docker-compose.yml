@@ -1,9 +1,14 @@
 services:
   coco-downloader:
-    image: markcxx/coco-downloader:latest
+    image: zjy8963/coco-downloader:latest
+    # 本地构建时注释掉 image，取消注释 build
+    # build: .
     container_name: coco-downloader
     restart: unless-stopped
     environment:
       - PORT=${PORT:-3000}
     ports:
-      - "${PORT:-3000}:${PORT:-3000}"
+      - "${PORT:-3000}:3000"
+    # 持久化适配器配置（测试后的优先级和死名单）
+    volumes:
+      - ./src/lib/playlist/adapter-priority.json:/app/src/lib/playlist/adapter-priority.json
