@@ -1,0 +1,93 @@
+{
+  "kugou": [
+    "haitangw",
+    "317ak",
+    "jbsou",
+    "cgg",
+    "liuyunidc"
+  ],
+  "netease": [
+    "xuanluoge",
+    "vincentzyu233",
+    "nanorocky",
+    "xianyuw",
+    "gdstudio",
+    "jfjt",
+    "xiaoqin",
+    "yutangxiaowu",
+    "qjqq",
+    "xcvts",
+    "manshuo",
+    "cunyu",
+    "znnu",
+    "xingmian",
+    "guyuei",
+    "317ak",
+    "bugpk",
+    "kangqiovo",
+    "luosu",
+    "xiaot",
+    "haitangw",
+    "xunjinlu",
+    "cgg",
+    "nycnmbyfuns",
+    "ceseet",
+    "tmetu",
+    "lblb",
+    "rrvenn",
+    "cyrui"
+  ],
+  "qq": [
+    "xianyuw",
+    "xunhuisi",
+    "317ak",
+    "vkeys",
+    "lxmusic",
+    "cyapi",
+    "tang",
+    "xcvts",
+    "liuyunidc",
+    "ygking",
+    "lpz",
+    "nki",
+    "luoyue"
+  ],
+  "kuwo": [
+    "yyy001",
+    "haitangw",
+    "lxmusic",
+    "nxinxz",
+    "ceseet",
+    "cgg",
+    "ccwu",
+    "guyuei",
+    "gdstudio",
+    "yibai"
+  ],
+  "_dead": {
+    "netease": [
+      "cgg",
+      "nycnmbyfuns",
+      "ceseet",
+      "tmetu",
+      "lblb",
+      "rrvenn",
+      "cyrui"
+    ],
+    "qq": [
+      "liuyunidc",
+      "ygking",
+      "lpz",
+      "nki",
+      "luoyue"
+    ],
+    "kugou": [
+      "cgg",
+      "liuyunidc"
+    ],
+    "kuwo": [
+      "gdstudio",
+      "yibai"
+    ]
+  }
+}

@@ -14,6 +14,7 @@ export interface PlayInfo {
   type: 'mp3' | 'm4a' | 'flac' | string;
   bitrate?: string;
   cover?: string;
+  lyric?: string;
 }
 
 export interface MusicProvider {

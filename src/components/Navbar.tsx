@@ -1,16 +1,16 @@
 'use client';
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Github, Sun, Moon, Heart } from "lucide-react";
+import { Github, Sun, Moon, FlaskConical } from "lucide-react";
 import { useState, MouseEvent } from "react";
 import { useTheme } from "next-themes";
 import DeveloperPanel from "./DeveloperPanel";
-import { DonationModal } from "./DonationModal";
 
 export function Navbar() {
+  const router = useRouter();
   const [showDevPanel, setShowDevPanel] = useState(false);
-  const [showDonation, setShowDonation] = useState(false);
   const { theme, setTheme, resolvedTheme } = useTheme();
   const currentTheme = resolvedTheme ?? theme ?? "light";
 
@@ -63,13 +63,13 @@ export function Navbar() {
         
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowDonation(true)}
-            className="p-2 text-slate-400 dark:text-slate-500 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-full transition-all duration-300 cursor-pointer"
-            title="支持作者"
+            onClick={() => router.push('/api-test')}
+            className="p-2 text-slate-400 dark:text-slate-500 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 rounded-full transition-all duration-300 cursor-pointer"
+            title="API 源测试"
           >
-            <Heart className="w-5 h-5" />
+            <FlaskConical className="w-5 h-5" />
           </button>
-          
+
           <a 
             href="https://github.com/markcxx/coco-downloader" 
             target="_blank" 
@@ -94,7 +94,6 @@ export function Navbar() {
       </nav>
 
       <DeveloperPanel open={showDevPanel} onClose={() => setShowDevPanel(false)} />
-      <DonationModal isOpen={showDonation} onClose={() => setShowDonation(false)} />
     </>
   );
 }

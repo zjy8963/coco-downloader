@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { Search, Loader2, Play, Pause, Download, Check, Music, Trash2, Flame, Zap, ShieldCheck, Headphones, ExternalLink } from "lucide-react";
+import { Search, Loader2, Play, Pause, Download, Check, Music, Trash2, Flame, Zap, ShieldCheck, Headphones, ExternalLink, ListMusic, Link } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { MusicItem } from "@/types/music";
@@ -47,15 +47,21 @@ const SourceLinkButton = ({ item }: { item: MusicItem }) => {
 };
 
 type PlayMode = "order" | "shuffle" | "single";
+type AppMode = "search" | "playlist";
 
 export default function Home() {
+  const [mode, setMode] = useState<AppMode>("search");
   const [query, setQuery] = useState("");
-  const [provider, setProvider] = useState("jianbin-kugou");
+  const [playlistUrl, setPlaylistUrl] = useState("");
+  const [playlistInfo, setPlaylistInfo] = useState<{ name: string; trackCount: number; cover?: string } | null>(null);
+  const [provider, setProvider] = useState("official");
   const [results, setResults] = useState<MusicItem[]>([]);
   const [loading, setLoading] = useState(false);
   
   // Playback State
   const [activeMusic, setActiveMusic] = useState<MusicItem | null>(null);
+  const [resolvedUrl, setResolvedUrl] = useState<string>('');
+  const [currentLyric, setCurrentLyric] = useState<string>('');
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -68,7 +74,34 @@ export default function Home() {
   const [searched, setSearched] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [downloadingCount, setDownloadingCount] = useState(0);
+
+  // 分平台标签页
+  type PlatformTab = 'netease' | 'qq' | 'kuwo' | 'kugou';
+  const [byPlatform, setByPlatform] = useState<Record<string, MusicItem[]>>({});
+  const [activePlatformTab, setActivePlatformTab] = useState<PlatformTab>('netease');
+
+  // 切换标签时同步 results
+  useEffect(() => {
+    setResults(byPlatform[activePlatformTab] || []);
+    setSelectedIds(new Set());
+  }, [byPlatform, activePlatformTab]);
   
+  // Pagination State（-1 表示「全部」）
+  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+  const [pageSize, setPageSize] = useState<number>(50);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // 结果变化时回到第 1 页
+  useEffect(() => { setCurrentPage(1); }, [results]);
+
+  const isAll = pageSize === -1 || pageSize >= results.length;
+  const effectivePageSize = isAll ? results.length : pageSize;
+  const totalPages = Math.max(1, Math.ceil(results.length / effectivePageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedResults = isAll
+    ? results
+    : results.slice((safePage - 1) * effectivePageSize, safePage * effectivePageSize);
+
   // Download Manager State
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -103,13 +136,51 @@ export default function Home() {
     setSearched(true);
     setResults([]);
     setSelectedIds(new Set());
+    setPlaylistInfo(null);
     
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&provider=${provider}`);
       const data = await res.json();
       setResults(data.items || []);
+      // 分平台结果，默认切换到第一个有结果的平台
+      if (data.byPlatform) {
+        setByPlatform(data.byPlatform);
+        const firstWithResults = (['netease', 'qq', 'kuwo', 'kugou'] as const)
+          .find(p => data.byPlatform[p]?.length > 0);
+        if (firstWithResults) setActivePlatformTab(firstWithResults);
+      } else {
+        setByPlatform({});
+      }
     } catch (err) {
       console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── 歌单解析 ──
+  const handlePlaylistParse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!playlistUrl.trim()) return;
+    
+    setLoading(true);
+    setSearched(true);
+    setResults([]);
+    setSelectedIds(new Set());
+    setPlaylistInfo(null);
+    
+    try {
+      const res = await fetch(`/api/playlist?url=${encodeURIComponent(playlistUrl)}`);
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      setPlaylistInfo(data.info);
+      setResults(data.items || []);
+    } catch (err) {
+      console.error(err);
+      alert('歌单解析失败，请检查链接是否有效');
     } finally {
       setLoading(false);
     }
@@ -166,12 +237,26 @@ export default function Home() {
       }
       
       setActiveMusic(item);
+      setCurrentLyric('');
       syncShuffleIndex(item.id);
       setPlaying(false); // Wait for load
       setCurrentTime(0);
+      setCurrentLyric('');
 
-      const res = await fetch(`/api/url?id=${item.id}&provider=${item.provider || 'gequbao'}`);
-      const data = await res.json();
+      // 歌单曲目用 POST 传 extra（歌曲信息用于歌词解析）
+      const isPlaylist = item.id.match(/^(netease|qq|kugou|kuwo):/);
+      let data;
+      if (isPlaylist && item.extra) {
+        const res = await fetch('/api/url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: item.id, provider: item.provider || 'gequbao', extra: item.extra }),
+        });
+        data = await res.json();
+      } else {
+        const res = await fetch(`/api/url?id=${item.id}&provider=${item.provider || 'gequbao'}`);
+        data = await res.json();
+      }
       
       if (data.url && audioRef.current) {
         // 如果返回了封面，更新当前播放歌曲的封面
@@ -179,6 +264,9 @@ export default function Home() {
           setActiveMusic(prev => prev ? { ...prev, cover: data.cover } : item);
         }
         
+        // 缓存已解析的 URL，下载时复用
+        setResolvedUrl(data.url);
+        if (data.lyric) { setCurrentLyric(data.lyric); }
         audioRef.current.src = data.url;
         audioRef.current.load();
         audioRef.current.play()
@@ -261,9 +349,17 @@ export default function Home() {
     ? "grid-cols-[40px_1fr_40px] md:grid-cols-[50px_2fr_1.5fr_120px]"
     : "grid-cols-[1fr_40px] md:grid-cols-[2fr_1.5fr_80px]";
 
+  /** 从 Content-Disposition 头解析文件名 */
+  const extractFilename = (disposition: string | undefined, fallback: string): string => {
+    if (!disposition) return fallback;
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/);
+    if (utf8Match) return decodeURIComponent(utf8Match[1]);
+    const plainMatch = disposition.match(/filename="([^"]+)"/);
+    return plainMatch ? plainMatch[1] : fallback;
+  };
+
   const executeDownload = async (task: DownloadTask) => {
     try {
-      // Update status to downloading
       setDownloadTasks(prev => prev.map(t => 
         t.id === task.id ? { ...t, status: 'downloading' } : t
       ));
@@ -276,32 +372,53 @@ export default function Home() {
         return;
       }
 
-      const response = await axios.get(`/api/download`, {
-        params: {
-          id: task.musicItem.id,
-          provider: task.musicItem.provider || 'gequbao',
-          filename: task.fileName
-        },
+      // 构造元数据
+      const item = task.musicItem;
+      const meta: Record<string, string | undefined> = {
+        title: item.title,
+        artist: item.artist,
+        album: item.album,
+        coverUrl: item.cover,
+      };
+      // 如果是当前播放的歌曲且 URL 已解析，直接复用
+      if (activeMusic?.id === item.id && resolvedUrl) {
+        meta._preResolvedUrl = resolvedUrl;
+      }
+      // 如果是当前播放的歌曲，附上已获取的歌词
+      if (activeMusic?.id === item.id && currentLyric) {
+        meta.lyric = currentLyric;
+      }
+
+      // 统一走 POST，后端嵌入元数据
+      const response = await axios.post('/api/download', {
+        id: item.id,
+        provider: item.provider || 'gequbao',
+        filename: task.fileName,
+        meta,
+      }, {
         responseType: 'blob',
         onDownloadProgress: (progressEvent) => {
           if (progressEvent.total) {
             const percent = (progressEvent.loaded / progressEvent.total) * 100;
-            setDownloadTasks(prev => prev.map(t => 
+            setDownloadTasks(prev => prev.map(t =>
               t.id === task.id ? { ...t, progress: percent } : t
             ));
           }
-        }
+        },
       });
 
-      // Handle completion
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      // 用后端返回的文件名（含正确扩展名）
+      const disposition = response.headers['content-disposition'] as string | undefined;
+      const downloadFilename = extractFilename(disposition, task.fileName);
+
+      const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
-      link.href = url;
-      link.download = task.fileName;
+      link.href = blobUrl;
+      link.download = downloadFilename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(blobUrl);
 
       setDownloadTasks(prev => prev.map(t => 
         t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t
@@ -319,7 +436,8 @@ export default function Home() {
   const downloadOne = async (item: MusicItem) => {
     const taskId = `${item.id}-${Date.now()}`;
     const cleanTitle = item.title.replace(/\s+/g, ' ').trim();
-    const filename = `${cleanTitle}.mp3`;
+    const cleanArtist = (item.artist && item.artist !== '未知歌手') ? item.artist.replace(/\s+/g, ' ').trim() : '';
+    const filename = cleanArtist ? `${cleanTitle} - ${cleanArtist}.mp3` : `${cleanTitle}.mp3`;
 
     // Add initial task
     const newTask: DownloadTask = {
@@ -367,12 +485,13 @@ export default function Home() {
     // 1. Create all tasks immediately
     const newTasks: DownloadTask[] = items.map(item => {
       const cleanTitle = item.title.replace(/\s+/g, ' ').trim();
+      const cleanArtist = (item.artist && item.artist !== '未知歌手') ? item.artist.replace(/\s+/g, ' ').trim() : '';
       return {
         id: `${item.id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         musicItem: item,
         status: 'pending',
         progress: 0,
-        fileName: `${cleanTitle}.mp3`,
+        fileName: cleanArtist ? `${cleanTitle} - ${cleanArtist}.mp3` : `${cleanTitle}.mp3`,
         startTime: Date.now()
       };
     });
@@ -517,7 +636,7 @@ export default function Home() {
         >
           <div className="flex items-center gap-3 mb-4">
              <span className="px-3 py-1 rounded-full bg-sky-100 dark:bg-sky-900 text-sky-600 dark:text-sky-300 text-xs font-bold tracking-wider uppercase">
-               v2.0 Beta
+               v3.0 畅享版
              </span>
           </div>
           <h1 className="text-4xl md:text-6xl font-bold text-slate-800 dark:text-slate-100 tracking-tight mb-4 text-center">
@@ -529,6 +648,35 @@ export default function Home() {
             极速解析，批量下载，纯净无广。
           </p>
           
+          {/* ── 模式切换 Pill ── */}
+          <div className="flex bg-slate-100 dark:bg-slate-800 rounded-full p-1 mb-6">
+            <button
+              onClick={() => { setMode("search"); setSearched(false); setResults([]); setPlaylistInfo(null); }}
+              className={cn(
+                "px-6 py-2 rounded-full text-sm font-medium transition-all duration-200",
+                mode === "search"
+                  ? "bg-white dark:bg-slate-700 text-sky-600 dark:text-sky-400 shadow-sm"
+                  : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
+              )}
+            >
+              <Search className="w-4 h-4 inline mr-1.5" />搜索
+            </button>
+            <button
+              onClick={() => { setMode("playlist"); setSearched(false); setResults([]); setPlaylistInfo(null); }}
+              className={cn(
+                "px-6 py-2 rounded-full text-sm font-medium transition-all duration-200",
+                mode === "playlist"
+                  ? "bg-white dark:bg-slate-700 text-violet-600 dark:text-violet-400 shadow-sm"
+                  : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
+              )}
+            >
+              <ListMusic className="w-4 h-4 inline mr-1.5" />歌单
+            </button>
+          </div>
+
+          {/* ── 搜索模式 ── */}
+          {mode === "search" && <>
+          
           {/* Provider Selector */}
           <div className="flex items-center gap-2 mb-3 text-sm font-medium text-slate-500 dark:text-slate-400">
              <Music className="w-4 h-4" />
@@ -536,6 +684,7 @@ export default function Home() {
           </div>
           <div className="flex justify-center mb-6 gap-3 flex-wrap">
             {[
+              { id: 'official', name: '⚡ 官方聚合', special: true },
               { id: 'gequbao', name: '歌曲宝' },
               { id: 'gequhai', name: '歌曲海' },
               { id: 'bugu', name: '布谷' },
@@ -554,8 +703,10 @@ export default function Home() {
                 onClick={() => setProvider(p.id)}
                 className={cn(
                   "px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 cursor-pointer",
-                  provider === p.id 
-                    ? "bg-sky-500 text-white shadow-lg shadow-sky-200 dark:shadow-none ring-2 ring-sky-200 dark:ring-sky-800 ring-offset-2 dark:ring-offset-slate-900" 
+                  provider === p.id
+                    ? (p.special
+                        ? "bg-gradient-to-r from-violet-500 to-purple-500 text-white shadow-lg shadow-purple-200 dark:shadow-none ring-2 ring-purple-200 dark:ring-purple-800 ring-offset-2 dark:ring-offset-slate-900"
+                        : "bg-sky-500 text-white shadow-lg shadow-sky-200 dark:shadow-none ring-2 ring-sky-200 dark:ring-sky-800 ring-offset-2 dark:ring-offset-slate-900")
                     : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-100 dark:border-slate-800 hover:border-sky-200 dark:hover:border-sky-700"
                 )}
               >
@@ -611,7 +762,35 @@ export default function Home() {
               </motion.div>
             )}
           </AnimatePresence>
+
+        </>}
+
         </motion.div>
+
+        {/* ── 歌单模式 ── */}
+        {mode === "playlist" && <>
+          <form onSubmit={handlePlaylistParse} className="relative w-full max-w-2xl group mb-6">
+            <div className="absolute inset-0 bg-violet-200 dark:bg-violet-900 rounded-full blur-xl opacity-30 group-hover:opacity-50 transition-opacity duration-300"></div>
+            <div className="relative flex items-center bg-white dark:bg-slate-900 border border-violet-200 dark:border-violet-800 rounded-full shadow-lg shadow-violet-50 dark:shadow-none px-6 py-3 overflow-hidden transition-all duration-300 group-hover:border-violet-300 dark:group-hover:border-violet-700">
+              <Link className="w-5 h-5 text-violet-400 dark:text-violet-500 mr-3 flex-shrink-0" />
+              <input
+                type="url"
+                value={playlistUrl}
+                onChange={(e) => setPlaylistUrl(e.target.value)}
+                placeholder="粘贴歌单链接...（支持网易云/QQ/酷狗/酷我）"
+                className="flex-1 bg-transparent border-none outline-none text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 text-sm"
+              />
+              <button
+                type="submit"
+                disabled={loading || !playlistUrl.trim()}
+                className="ml-3 px-5 py-1.5 bg-violet-500 hover:bg-violet-600 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white rounded-full text-sm font-medium transition-colors disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                解析
+              </button>
+            </div>
+          </form>
+        </>}
 
         {/* Features Grid - Only show when not searched */}
         <AnimatePresence>
@@ -650,14 +829,104 @@ export default function Home() {
               transition={{ delay: 0.2 }}
               className="mt-16 text-center text-slate-400 dark:text-slate-500 text-sm"
             >
-              <p>© 2024 COCO Music. Powered by Next.js & React.</p>
+              <p>© 2026 COCO Music v3.0</p>
               <p className="mt-2 text-xs text-slate-300 dark:text-slate-600">仅供个人学习交流使用，请勿用于商业用途</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── 歌单信息横幅 ── */}
+        <AnimatePresence>
+          {playlistInfo && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="w-full max-w-4xl mx-auto mb-6"
+            >
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-violet-100 dark:border-violet-900/30 p-4 flex items-center gap-4 shadow-sm">
+                {playlistInfo.cover ? (
+                  <Image
+                    src={playlistInfo.cover}
+                    alt={playlistInfo.name}
+                    width={64}
+                    height={64}
+                    className="rounded-xl object-cover flex-shrink-0"
+                    unoptimized
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-xl bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center flex-shrink-0">
+                    <ListMusic className="w-7 h-7 text-violet-500" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-slate-800 dark:text-slate-100 truncate">
+                    {playlistInfo.name}
+                  </h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                    {playlistInfo.trackCount} 首歌曲
+                  </p>
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Results List */}
         <div className="w-full max-w-4xl mx-auto flex-1">
+          {/* 平台标签页 */}
+          {searched && Object.keys(byPlatform).length > 0 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex items-center gap-1 mb-4"
+            >
+              {(['netease', 'qq', 'kuwo', 'kugou'] as const).map((p) => {
+                const count = (byPlatform[p] || []).length;
+                const isActive = activePlatformTab === p;
+                return (
+                  <button
+                    key={p}
+                    onClick={() => setActivePlatformTab(p)}
+                    className={cn(
+                      "relative px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer",
+                      "flex items-center gap-2 border",
+                      isActive
+                        ? p === 'netease'
+                          ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400"
+                          : p === 'qq'
+                          ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400"
+                          : p === 'kuwo'
+                          ? "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400"
+                          : "bg-sky-50 dark:bg-sky-900/20 border-sky-200 dark:border-sky-800 text-sky-600 dark:text-sky-400"
+                        : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:border-slate-200 dark:hover:border-slate-700",
+                    )}
+                  >
+                    {isActive && (
+                      <span className={cn(
+                        "absolute inset-0 rounded-xl opacity-10",
+                        p === 'netease' && "bg-red-500",
+                        p === 'qq' && "bg-emerald-500",
+                        p === 'kuwo' && "bg-amber-500",
+                        p === 'kugou' && "bg-sky-500",
+                      )} />
+                    )}
+                    <span className="relative">
+                      {p === 'netease' ? '网易云' : p === 'qq' ? 'QQ' : p === 'kuwo' ? '酷我' : '酷狗'}
+                    </span>
+                    <span className={cn(
+                      "relative text-xs px-1.5 py-0.5 rounded-full",
+                      isActive
+                        ? "bg-white/60 dark:bg-white/10"
+                        : "bg-slate-100 dark:bg-slate-800",
+                    )}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </motion.div>
+          )}
           <AnimatePresence mode="wait">
             {loading ? (
               <motion.div 
@@ -707,7 +976,7 @@ export default function Home() {
 
                 {/* List Items */}
                 <div className="divide-y divide-slate-50 dark:divide-slate-800">
-                  {results.map((item) => {
+                  {pagedResults.map((item) => {
                     const isActive = activeMusic?.id === item.id;
                     const isSelected = selectedIds.has(item.id);
                     
@@ -770,12 +1039,14 @@ export default function Home() {
                             </div>
                           </div>
                           <div className="flex flex-col min-w-0 overflow-hidden">
-                            <span className={cn(
-                              "font-medium truncate",
-                              isActive ? "text-sky-600 dark:text-sky-400" : "text-slate-700 dark:text-slate-200"
-                            )}>
-                              {item.title}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span className={cn(
+                                "font-medium truncate",
+                                isActive ? "text-sky-600 dark:text-sky-400" : "text-slate-700 dark:text-slate-200"
+                              )}>
+                                {item.title}
+                              </span>
+                            </div>
                             <span className="text-xs text-slate-400 dark:text-slate-500 truncate md:hidden block mt-0.5">
                               {item.artist}
                             </span>
@@ -802,6 +1073,85 @@ export default function Home() {
                     );
                   })}
                 </div>
+
+                {/* Pagination Bar */}
+                {!isAll && results.length > 0 && (
+                  <div className="flex items-center justify-between px-4 py-3 border-t border-slate-50 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-800/20">
+                    {/* 左侧：每页条数 */}
+                    <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+                      <span>每页</span>
+                      <select
+                        value={pageSize}
+                        onChange={(e) => {
+                          setPageSize(Number(e.target.value));
+                          setCurrentPage(1);
+                        }}
+                        className="appearance-none bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-sm text-slate-700 dark:text-slate-300 cursor-pointer hover:border-sky-300 dark:hover:border-sky-600 transition-colors outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-400/30"
+                      >
+                        {PAGE_SIZE_OPTIONS.map(n => (
+                          <option key={n} value={n}>{n}</option>
+                        ))}
+                        <option value={-1}>全部</option>
+                      </select>
+                      <span>条</span>
+                    </div>
+
+                    {/* 中间：条目信息 */}
+                    <span className="text-xs text-slate-400 dark:text-slate-500">
+                      {(safePage - 1) * effectivePageSize + 1}–{Math.min(safePage * effectivePageSize, results.length)} / 共 {results.length} 条
+                    </span>
+
+                    {/* 右侧：翻页按钮 */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                        disabled={safePage <= 1}
+                        className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
+                      >
+                        ‹
+                      </button>
+                      {/* 页码按钮 */}
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter(p => {
+                          // 显示首尾 + 当前页附近
+                          if (p === 1 || p === totalPages) return true;
+                          if (Math.abs(p - safePage) <= 2) return true;
+                          return false;
+                        })
+                        .reduce<(number | 'ellipsis')[]>((acc, p, idx, arr) => {
+                          if (idx > 0 && p - (arr[idx - 1] as number) > 1) {
+                            acc.push('ellipsis');
+                          }
+                          acc.push(p);
+                          return acc;
+                        }, [])
+                        .map((item, idx) =>
+                          item === 'ellipsis' ? (
+                            <span key={`e-${idx}`} className="w-8 h-8 flex items-center justify-center text-slate-300 dark:text-slate-600 text-xs">…</span>
+                          ) : (
+                            <button
+                              key={item}
+                              onClick={() => setCurrentPage(item)}
+                              className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${
+                                item === safePage
+                                  ? 'bg-sky-500 text-white shadow-sm shadow-sky-500/20'
+                                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                              }`}
+                            >
+                              {item}
+                            </button>
+                          )
+                        )}
+                      <button
+                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                        disabled={safePage >= totalPages}
+                        className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
+                      >
+                        ›
+                      </button>
+                    </div>
+                  </div>
+                )}
               </motion.div>
             ) : searched ? (
               <motion.div
@@ -903,6 +1253,7 @@ export default function Home() {
         {activeMusic && (
           <PlayerBar 
             currentMusic={activeMusic}
+            lyric={currentLyric}
             isPlaying={playing}
             onPlayPause={() => {
               if (playing) {
@@ -922,6 +1273,7 @@ export default function Home() {
             onSeek={handleSeek}
             volume={volume}
             onVolumeChange={setVolume}
+            hasLyric={!!currentLyric}
           />
         )}
       </AnimatePresence>
