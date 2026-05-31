@@ -71,7 +71,7 @@ export function Navbar() {
           </button>
 
           <a 
-            href="https://github.com/markcxx/coco-downloader" 
+            href="https://github.com/zjy8963/coco-downloader" 
             target="_blank" 
             rel="noopener noreferrer"
             className="p-2 text-slate-400 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-all duration-300 cursor-pointer"
