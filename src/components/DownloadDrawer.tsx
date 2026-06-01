@@ -15,6 +15,9 @@ interface DownloadDrawerProps {
   onTogglePause: () => void;
   pendingCount: number;
   downloadingCount: number;
+  hasSavePath?: boolean;
+  saveToDisk?: boolean;
+  onToggleSaveToDisk?: () => void;
 }
 
 type FilterTab = 'all' | 'pending' | 'completed' | 'error';
@@ -30,6 +33,9 @@ export function DownloadDrawer({
   onTogglePause,
   pendingCount,
   downloadingCount,
+  hasSavePath,
+  saveToDisk,
+  onToggleSaveToDisk,
 }: DownloadDrawerProps) {
   const [filter, setFilter] = useState<FilterTab>('all');
   const [clearMenuOpen, setClearMenuOpen] = useState(false);
@@ -112,6 +118,21 @@ export function DownloadDrawer({
                       title={isPaused ? '继续下载' : '暂停下载'}
                     >
                       {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+                    </button>
+                  )}
+                  {/* NAS 存盘切换 */}
+                  {hasSavePath && onToggleSaveToDisk && (
+                    <button
+                      onClick={onToggleSaveToDisk}
+                      className={cn(
+                        'px-2 py-1 rounded-full text-[10px] font-medium transition-colors border',
+                        saveToDisk
+                          ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 border-emerald-200 dark:border-emerald-800/30'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700'
+                      )}
+                      title={saveToDisk ? '存到 NAS' : '浏览器下载'}
+                    >
+                      {saveToDisk ? '💾' : '🌐'}
                     </button>
                   )}
                   {/* 清空菜单 */}

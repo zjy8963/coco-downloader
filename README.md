@@ -101,20 +101,6 @@ npm run build
 npm start
 ```
 
-## 🚀 docker部署方案
-
-**适合不想装 Node.js 的小伙伴，一行命令跑起来：**
-
-```bash
-# 1. 拉取镜像
-docker pull zjy8963/coco-downloader:latest
-
-# 2. 运行
-docker run -d -p 3000:3000 --name coco-downloader zjy8963/coco-downloader:latest
-```
-
-打开浏览器访问 `http://localhost:3000` 即可使用。
-
 ## 📂 项目结构
 
 ```
@@ -150,7 +136,37 @@ coco-downloader/
 
 项目后端采用策略模式设计。在 `src/lib/providers` 下定义了统一的接口。若需添加新的音乐网站源，只需新建一个实现类并在工厂方法中注册即可，无需大幅修改前端逻辑。
 
+## 🚀 快速开始（Docker）
 
+**适合不想装 Node.js 的小伙伴，一行命令跑起来：**
+
+```bash
+# 1. 拉取镜像
+docker pull zjy8963/coco-downloader:latest
+
+# 2. 运行
+docker run -d -p 3000:3000 --name coco-downloader zjy8963/coco-downloader:latest
+```
+
+打开浏览器访问 `http://localhost:3000` 即可使用。
+
+---
+
+### 其他方式
+
+**本地开发（需要 Node.js）：**
+
+```bash
+npm run build
+npm start
+```
+
+**自己构建镜像：**
+
+```bash
+docker build -t coco-downloader .
+docker run -d -p 3000:3000 --name coco-downloader coco-downloader
+```
 
 ## ⚠️ 免责声明
 

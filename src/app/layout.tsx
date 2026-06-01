@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import "@/lib/logger"; // 激活服务端日志拦截
 import { Navbar } from "@/components/Navbar";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import LogPanel from "@/components/LogPanel";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -39,6 +41,7 @@ export default function RootLayout({
     ENABLE_DOWNLOAD: downloadEnabled ? "1" : "0",
     ANNOUNCEMENT_ENABLED: announcementEnabled ? "1" : "0",
     ANNOUNCEMENT_TEXT: announcementText,
+    HAS_SAVE_PATH: process.env.SAVE_PATH ? "1" : "0",
   };
 
   return (
@@ -66,6 +69,7 @@ export default function RootLayout({
             <Navbar />
           </div>
           <div className="min-h-screen">{children}</div>
+          <LogPanel />
         </ThemeProvider>
       </body>
     </html>

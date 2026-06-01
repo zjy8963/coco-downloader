@@ -7,8 +7,11 @@ services:
     restart: unless-stopped
     environment:
       - PORT=${PORT:-3000}
+      - SAVE_PATH=/app/downloads
     ports:
       - "${PORT:-3000}:3000"
-    # 持久化适配器配置（测试后的优先级和死名单）
+    # 下载目录（NAS 挂载）
     volumes:
+      - /mnt/nas/music:/app/downloads
+      # 适配器配置持久化
       - ./src/lib/playlist/adapter-priority.json:/app/src/lib/playlist/adapter-priority.json

@@ -73,7 +73,6 @@ export default function Home() {
 
   const [searched, setSearched] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [downloadingCount, setDownloadingCount] = useState(0);
 
   // 分平台标签页
   type PlatformTab = 'netease' | 'qq' | 'kuwo' | 'kugou';
@@ -106,6 +105,145 @@ export default function Home() {
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [downloadEnabled, setDownloadEnabled] = useState(true);
+  const [hasSavePath, setHasSavePath] = useState(false);
+  const [saveToDisk, setSaveToDisk] = useState(false);
+
+  // ── 暂停 / 继续 ──
+  const [isPaused, setIsPaused] = useState(false);
+  const pauseRef = useRef(false);
+
+  // ── localStorage 持久化 ──
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('coco-download-tasks');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          // 恢复时把 downloading 状态的任务重置为 pending
+          setDownloadTasks(parsed.map((t: DownloadTask) =>
+            t.status === 'downloading' ? { ...t, status: 'pending', progress: 0 } : t
+          ));
+        }
+      }
+    } catch {}
+  }, []);
+
+  const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      try { localStorage.setItem('coco-download-tasks', JSON.stringify(downloadTasks)); } catch {}
+    }, 300);
+  }, [downloadTasks]);
+
+  // 顶部导航栏下载按钮事件
+  useEffect(() => {
+    const handler = () => setIsDrawerOpen(prev => !prev);
+    window.addEventListener('toggle-coco-download', handler);
+    return () => window.removeEventListener('toggle-coco-download', handler);
+  }, []);
+
+  // 下载失败 → 跳转单曲搜索事件
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const q = (e as CustomEvent).detail as string;
+      if (q) {
+        setQuery(q);
+        setMode('search');
+        setLoading(true);
+        setSearched(true);
+        fetch(`/api/search?q=${encodeURIComponent(q)}&provider=official`)
+          .then(r => r.json())
+          .then(data => {
+            setResults(data.items || []);
+            if (data.byPlatform) {
+              setByPlatform(data.byPlatform);
+              const first = (['netease','qq','kuwo','kugou'] as const).find(p => data.byPlatform[p]?.length > 0);
+              if (first) setActivePlatformTab(first);
+            }
+            setSearched(true);
+          })
+          .finally(() => setLoading(false));
+      }
+    };
+    window.addEventListener('trigger-coco-search', handler);
+    return () => window.removeEventListener('trigger-coco-search', handler);
+  }, []);
+
+  const handleClearTasks = (type: 'all' | 'pending' | 'completed' | 'error') => {
+    setDownloadTasks(prev => {
+      if (type === 'all') return [];
+      return prev.filter(t => t.status !== type);
+    });
+  };
+
+  // ── 暂停 / 继续 ──
+  const togglePause = () => {
+    const next = !isPaused;
+    pauseRef.current = next;
+    setIsPaused(next);
+    if (!next) ensureProcessing();
+  };
+
+  // ── 统一处理器：从 ref 实时取 pending，新增任务自动被消费 ──
+  const processingRef = useRef(false);
+  const tasksRef = useRef<DownloadTask[]>([]);
+  const processingIds = useRef<Set<string>>(new Set()); // 防止 ref 滞后导致重复取同一任务
+  tasksRef.current = downloadTasks;
+
+  const ensureProcessing = () => {
+    if (pauseRef.current || processingRef.current) return;
+    setTimeout(() => processAllPending(), 0);
+  };
+
+  const processAllPending = async () => {
+    processingRef.current = true;
+    const CONCURRENCY = 3;
+    const running: Promise<void>[] = [];
+
+    const takePending = (): DownloadTask[] => {
+      return tasksRef.current.filter(
+        t => t.status === 'pending' && !processingIds.current.has(t.id)
+      );
+    };
+
+    const startTask = (task: DownloadTask) => {
+      processingIds.current.add(task.id);
+      const tracked = executeDownload(task).finally(() => {
+        processingIds.current.delete(task.id);
+        const idx = running.indexOf(tracked);
+        if (idx > -1) running.splice(idx, 1);
+      });
+      running.push(tracked);
+    };
+
+    try {
+      // 第一轮：立刻取所有待下载，最多 CONCURRENCY 并行启动
+      const initial = takePending().slice(0, CONCURRENCY);
+      for (const task of initial) startTask(task);
+
+      // 后续：完成一个补一个
+      while (true) {
+        if (pauseRef.current) break;
+
+        if (running.length >= CONCURRENCY) {
+          await Promise.race(running);
+        }
+
+        const next = takePending()[0]; // FIFO
+        if (!next) {
+          if (running.length === 0) break;
+          await Promise.race(running);
+          continue;
+        }
+
+        startTask(next);
+      }
+      await Promise.allSettled(running);
+    } finally {
+      processingRef.current = false;
+    }
+  };
 
   const openSourceUrl = async (item: MusicItem) => {
     const res = await fetch(
@@ -259,35 +397,74 @@ export default function Home() {
       }
       
       if (data.url && audioRef.current) {
-        // 如果返回了封面，更新当前播放歌曲的封面
         if (data.cover) {
           setActiveMusic(prev => prev ? { ...prev, cover: data.cover } : item);
         }
-        
-        // 缓存已解析的 URL，下载时复用
+
         setResolvedUrl(data.url);
         if (data.lyric) { setCurrentLyric(data.lyric); }
         audioRef.current.src = data.url;
         audioRef.current.load();
         audioRef.current.play()
           .then(() => setPlaying(true))
-          .catch(e => {
-            console.error("Play failed", e);
-            const nextIndex = getNextIndexById(item.id);
-            if (nextIndex >= 0) {
-              handlePlay(results[nextIndex]);
+          .catch(async (e) => {
+            console.warn("Play failed, trying jianbin fallback:", e);
+
+            // 播放失败 → 尝试 jianbin 兜底拿新 URL
+            const fallbackData = await fetch('/api/url', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: item.id,
+                provider: item.id.match(/^(netease|qq|kugou|kuwo):/) ? 'jianbin-' + item.id.split(':')[0] : 'jianbin-netease',
+                extra: item.extra,
+              }),
+            }).then(r => r.json()).catch(() => ({} as any));
+
+            if (fallbackData?.url && audioRef.current) {
+              setResolvedUrl(fallbackData.url);
+              if (fallbackData.lyric) setCurrentLyric(fallbackData.lyric);
+              audioRef.current.src = fallbackData.url;
+              audioRef.current.load();
+              audioRef.current.play()
+                .then(() => setPlaying(true))
+                .catch(() => {
+                  const nextIndex = getNextIndexById(item.id);
+                  if (nextIndex >= 0) handlePlay(results[nextIndex]);
+                  else { setActiveMusic(null); setPlaying(false); }
+                });
             } else {
-              setActiveMusic(null);
-              setPlaying(false);
+              const nextIndex = getNextIndexById(item.id);
+              if (nextIndex >= 0) handlePlay(results[nextIndex]);
+              else { setActiveMusic(null); setPlaying(false); }
             }
           });
       } else {
-        const nextIndex = getNextIndexById(item.id);
-        if (nextIndex >= 0) {
-          handlePlay(results[nextIndex]);
+        // 无 URL → 尝试 jianbin 兜底
+        const platformPrefix = item.id.match(/^(netease|qq|kugou|kuwo):/);
+        const jbProvider = platformPrefix ? 'jianbin-' + platformPrefix[1] : 'jianbin-netease';
+        const fallbackData = await fetch('/api/url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: item.id, provider: jbProvider, extra: item.extra }),
+        }).then(r => r.json()).catch(() => ({} as any));
+
+        if (fallbackData?.url && audioRef.current) {
+          setResolvedUrl(fallbackData.url);
+          if (fallbackData.lyric) setCurrentLyric(fallbackData.lyric);
+          audioRef.current.src = fallbackData.url;
+          audioRef.current.load();
+          audioRef.current.play()
+            .then(() => setPlaying(true))
+            .catch(() => {
+              const nextIndex = getNextIndexById(item.id);
+              if (nextIndex >= 0) handlePlay(results[nextIndex]);
+              else { setActiveMusic(null); setPlaying(false); }
+            });
         } else {
-          setActiveMusic(null);
-          setPlaying(false);
+          const nextIndex = getNextIndexById(item.id);
+          if (nextIndex >= 0) handlePlay(results[nextIndex]);
+          else { setActiveMusic(null); setPlaying(false); }
         }
       }
     } catch (err) {
@@ -335,7 +512,7 @@ export default function Home() {
   }, [volume]);
 
   useEffect(() => {
-    const env = (window as Window & { __COCO_ENV?: { ENABLE_DOWNLOAD?: string } }).__COCO_ENV;
+    const env = (window as Window & { __COCO_ENV?: { ENABLE_DOWNLOAD?: string; HAS_SAVE_PATH?: string } }).__COCO_ENV;
     if (env?.ENABLE_DOWNLOAD === "0") {
       setDownloadEnabled(false);
       return;
@@ -343,7 +520,20 @@ export default function Home() {
     if (env?.ENABLE_DOWNLOAD === "1") {
       setDownloadEnabled(true);
     }
+    if (env?.HAS_SAVE_PATH === "1") {
+      setHasSavePath(true);
+    }
+    // 读取存盘偏好
+    try {
+      const saved = localStorage.getItem('coco-save-to-disk');
+      if (saved === 'true') setSaveToDisk(true);
+    } catch {}
   }, []);
+
+  // 存盘偏好变化时持久化
+  useEffect(() => {
+    try { localStorage.setItem('coco-save-to-disk', String(saveToDisk)); } catch {}
+  }, [saveToDisk]);
 
   const listGridTemplate = downloadEnabled
     ? "grid-cols-[40px_1fr_40px] md:grid-cols-[50px_2fr_1.5fr_120px]"
@@ -359,6 +549,9 @@ export default function Home() {
   };
 
   const executeDownload = async (task: DownloadTask) => {
+    // 暂停中：保持 pending 状态，不执行
+    if (pauseRef.current) return;
+
     try {
       setDownloadTasks(prev => prev.map(t => 
         t.id === task.id ? { ...t, status: 'downloading' } : t
@@ -395,6 +588,7 @@ export default function Home() {
         provider: item.provider || 'gequbao',
         filename: task.fileName,
         meta,
+        saveToDisk,
       }, {
         responseType: 'blob',
         onDownloadProgress: (progressEvent) => {
@@ -409,6 +603,19 @@ export default function Home() {
 
       // 用后端返回的文件名（含正确扩展名）
       const disposition = response.headers['content-disposition'] as string | undefined;
+
+      // 存盘模式：后端返回 JSON，不触发浏览器下载
+      const ct = response.headers['content-type'] as string || '';
+      if (ct.includes('application/json')) {
+        const text = await new Response(response.data).text();
+        let saved: { path?: string; filename?: string } = {};
+        try { saved = JSON.parse(text); } catch {}
+        setDownloadTasks(prev => prev.map(t =>
+          t.id === task.id ? { ...t, status: 'completed', progress: 100, finishedTime: Date.now(), fileName: saved.filename || task.fileName } : t
+        ));
+        return;
+      }
+
       const downloadFilename = extractFilename(disposition, task.fileName);
 
       const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
@@ -421,14 +628,14 @@ export default function Home() {
       window.URL.revokeObjectURL(blobUrl);
 
       setDownloadTasks(prev => prev.map(t => 
-        t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t
+        t.id === task.id ? { ...t, status: 'completed', progress: 100, finishedTime: Date.now() } : t
       ));
 
     } catch (err: unknown) {
       console.error(err);
       const errorMessage = err instanceof Error ? err.message : 'Download failed';
       setDownloadTasks(prev => prev.map(t => 
-        t.id === task.id ? { ...t, status: 'error', error: errorMessage } : t
+        t.id === task.id ? { ...t, status: 'error', error: errorMessage, finishedTime: Date.now() } : t
       ));
     }
   };
@@ -437,7 +644,7 @@ export default function Home() {
     const taskId = `${item.id}-${Date.now()}`;
     const cleanTitle = item.title.replace(/\s+/g, ' ').trim();
     const cleanArtist = (item.artist && item.artist !== '未知歌手') ? item.artist.replace(/\s+/g, ' ').trim() : '';
-    const filename = cleanArtist ? `${cleanTitle} - ${cleanArtist}.mp3` : `${cleanTitle}.mp3`;
+    const filename = cleanArtist ? `${cleanTitle}-${cleanArtist}.mp3` : `${cleanTitle}.mp3`;
 
     // Add initial task
     const newTask: DownloadTask = {
@@ -449,11 +656,18 @@ export default function Home() {
       startTime: Date.now()
     };
 
-    setDownloadTasks(prev => [newTask, ...prev]);
+    // 有正在下载或待下载的任务时，排到末尾等待，不插队
+    const hasActive = downloadTasks.some(t => t.status === 'downloading' || t.status === 'pending');
+
+    setDownloadTasks(prev => [...prev, newTask]);
     setIsDrawerOpen(true);
-    
-    // Execute immediately for single download
-    await executeDownload(newTask);
+
+    if (!pauseRef.current && !hasActive) {
+      await executeDownload(newTask);
+    } else if (!pauseRef.current && hasActive) {
+      // 队列已在运行，新任务自动被消费
+      ensureProcessing();
+    }
   };
 
   const toggleSelection = (id: string) => {
@@ -491,44 +705,17 @@ export default function Home() {
         musicItem: item,
         status: 'pending',
         progress: 0,
-        fileName: cleanArtist ? `${cleanTitle} - ${cleanArtist}.mp3` : `${cleanTitle}.mp3`,
+        fileName: cleanArtist ? `${cleanTitle}-${cleanArtist}.mp3` : `${cleanTitle}.mp3`,
         startTime: Date.now()
       };
     });
 
     // 2. Add to state
-    setDownloadTasks(prev => [...newTasks, ...prev]);
+    setDownloadTasks(prev => [...prev, ...newTasks]);
     setIsDrawerOpen(true);
-    setDownloadingCount(items.length);
 
-    // 3. Process with concurrency limit
-    const CONCURRENCY_LIMIT = 3;
-    const queue = [...newTasks];
-    const activePromises: Promise<void>[] = [];
-
-    const processQueue = async () => {
-      while (queue.length > 0) {
-        if (activePromises.length >= CONCURRENCY_LIMIT) {
-          await Promise.race(activePromises);
-        }
-        
-        const task = queue.shift();
-        if (task) {
-          const promise = executeDownload(task).then(() => {
-            setDownloadingCount(prev => Math.max(0, prev - 1));
-            // Remove self from active promises
-            const index = activePromises.indexOf(promise);
-            if (index > -1) activePromises.splice(index, 1);
-          });
-          activePromises.push(promise);
-        }
-      }
-      // Wait for remaining
-      await Promise.all(activePromises);
-    };
-
-    await processQueue();
-    setDownloadingCount(0);
+    // 3. 启动统一处理器（若已在运行则自动消费新增任务）
+    ensureProcessing();
   };
 
   const currentIndex = activeMusic ? results.findIndex(r => r.id === activeMusic.id) : -1;
@@ -1172,7 +1359,14 @@ export default function Home() {
           onClose={() => setIsDrawerOpen(false)}
           tasks={downloadTasks}
           onRemoveTask={(taskId) => setDownloadTasks(prev => prev.filter(t => t.id !== taskId))}
-          onClearCompleted={() => setDownloadTasks(prev => prev.filter(t => t.status === 'downloading' || t.status === 'pending'))}
+          onClearTasks={handleClearTasks}
+          isPaused={isPaused}
+          onTogglePause={togglePause}
+          pendingCount={downloadTasks.filter(t => t.status === 'pending').length}
+          downloadingCount={downloadTasks.filter(t => t.status === 'downloading').length}
+          hasSavePath={hasSavePath}
+          saveToDisk={saveToDisk}
+          onToggleSaveToDisk={() => setSaveToDisk(v => !v)}
         />
       ) : null}
 
@@ -1187,8 +1381,8 @@ export default function Home() {
             className="fixed bottom-6 right-6 z-50 w-14 h-14 bg-sky-500 hover:bg-sky-600 text-white rounded-full shadow-lg shadow-sky-500/30 flex items-center justify-center transition-all active:scale-95 group"
           >
             <div className="relative">
-               <Download className="w-6 h-6" />
-               {downloadTasks.some(t => t.status === 'downloading') && (
+               {isPaused ? <Pause className="w-6 h-6 text-amber-300" /> : <Download className="w-6 h-6" />}
+               {!isPaused && downloadTasks.some(t => t.status === 'downloading') && (
                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                    <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
@@ -1221,21 +1415,27 @@ export default function Home() {
 
               <button 
                 onClick={handleBatchDownload}
-                disabled={downloadingCount > 0}
-                className="flex items-center gap-2 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 font-medium text-sm transition-colors disabled:opacity-50 cursor-pointer"
+                className="flex items-center gap-2 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 font-medium text-sm transition-colors cursor-pointer"
               >
-                {downloadingCount > 0 ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    剩余 {downloadingCount} 首...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" />
-                    批量下载
-                  </>
-                )}
+                <Download className="w-4 h-4" />
+                批量下载
               </button>
+
+              {/* NAS 存盘切换 */}
+              {hasSavePath && (
+                <button
+                  onClick={() => setSaveToDisk(v => !v)}
+                  className={cn(
+                    'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors border',
+                    saveToDisk
+                      ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/30'
+                      : 'bg-slate-50 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'
+                  )}
+                  title={saveToDisk ? '存到 NAS 挂载目录' : '浏览器下载'}
+                >
+                  {saveToDisk ? '💾 NAS' : '🌐 浏览器'}
+                </button>
+              )}
 
               <button 
                 onClick={() => setSelectedIds(new Set())}
