@@ -29,7 +29,8 @@ RUN chown nextjs:nodejs .next
 COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-USER nextjs
+# 用户权限由 docker-compose 控制
+# USER nextjs
 
 EXPOSE 3000
 

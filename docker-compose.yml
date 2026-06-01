@@ -5,6 +5,7 @@ services:
     # build: .
     container_name: coco-downloader
     restart: unless-stopped
+    user: "0:0"  # root 权限，确保能写 NAS 挂载目录
     environment:
       - PORT=${PORT:-3000}
       - SAVE_PATH=/app/downloads

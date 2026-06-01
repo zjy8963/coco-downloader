@@ -276,6 +276,11 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/** 净化文件名，替换不安全字符 */
+function sanitizeFilename(name: string): string {
+  return name.replace(/[\\/:*?"<>|]/g, '_').replace(/_+/g, '_');
+}
+
 /** 存盘或返回浏览器 */
 function respond(taggedBuffer: Buffer, fileType: string, safeFilename: string, saveToDisk: boolean) {
   if (saveToDisk && process.env.SAVE_PATH) {
@@ -283,10 +288,11 @@ function respond(taggedBuffer: Buffer, fileType: string, safeFilename: string, s
     const path = require('path');
     const savePath = process.env.SAVE_PATH;
     if (!fs.existsSync(savePath)) fs.mkdirSync(savePath, { recursive: true });
-    const filePath = path.join(savePath, safeFilename);
+    const cleanName = sanitizeFilename(safeFilename);
+    const filePath = path.join(savePath, cleanName);
     fs.writeFileSync(filePath, taggedBuffer);
     console.log(`[download] 已保存: ${filePath} (${(taggedBuffer.length / 1024 / 1024).toFixed(1)}MB)`);
-    return NextResponse.json({ ok: true, path: filePath, filename: safeFilename, size: taggedBuffer.length });
+    return NextResponse.json({ ok: true, path: filePath, filename: cleanName, size: taggedBuffer.length });
   }
   return new NextResponse(new Uint8Array(taggedBuffer), {
     status: 200,
