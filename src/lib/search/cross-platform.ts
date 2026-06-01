@@ -32,7 +32,7 @@ export async function searchAll(query: string, limit = 30): Promise<SearchAllRes
       extra: {
         ...(item.extra as Record<string, unknown> || {}),
         platform: p,
-        details: { [p]: { id: item.id, title: item.title, artist: item.artist } },
+        details: { [p]: { id: item.id.split(':')[1] || item.id, title: item.title, artist: item.artist } },
         platforms: [p],
         _source: 'official' as const,
       },
