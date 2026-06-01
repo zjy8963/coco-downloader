@@ -8,7 +8,7 @@
  *   复活检测 → 无需操作（select 实时读 dead list）
  */
 import { AudioApiAdapter, Platform, RawTrackData, PlayInfo } from '@/lib/playlist/types';
-import { loadPriorityConfig, loadDeadListFor } from '@/lib/playlist/adapter-config';
+import { loadPriorityConfig, loadExcludedListFor } from '@/lib/playlist/adapter-config';
 
 // ── 内部类型 ──
 
@@ -65,8 +65,8 @@ export class AdapterLoadBalancer {
     let state = this.platforms.get(platform);
     if (state) return state;
 
-    const deadList = loadDeadListFor(platform);
-    const live = allAdapters.filter(a => !deadList.includes(a.name));
+    const excludedList = loadExcludedListFor(platform);
+    const live = allAdapters.filter(a => !excludedList.includes(a.name));
 
     // 排序：历史 order > static priority
     const config = loadPriorityConfig();
@@ -197,8 +197,8 @@ export class AdapterLoadBalancer {
   // ── 私有 ──
 
   private liveAdapters(platform: Platform, all: AudioApiAdapter[]): AudioApiAdapter[] {
-    const dead = loadDeadListFor(platform);
-    return all.filter(a => !dead.includes(a.name));
+    const excluded = loadExcludedListFor(platform);
+    return all.filter(a => !excluded.includes(a.name));
   }
 
   private kickFromPool(state: PlatformState, member: AdapterState): void {

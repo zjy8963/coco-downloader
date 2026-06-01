@@ -2,7 +2,7 @@ import { AudioApiAdapter, AudioResolver, Platform, RawTrackData, PlayInfo } from
 
 import axios from 'axios';
 
-import { loadPriorityConfig, loadDeadListFor } from '../adapter-config';
+import { loadPriorityConfig, loadExcludedListFor } from '../adapter-config';
 
 // ── 构建函数 ──
 
@@ -11,23 +11,47 @@ function buildResolverFromList(platform: Platform, adapters: AudioApiAdapter[], 
     platform,
     async resolve(raw: RawTrackData): Promise<PlayInfo> {
       const BATCH = 5;
+
       for (let i = 0; i < adapters.length; i += BATCH) {
         const batch = adapters.slice(i, i + BATCH);
         const results = await Promise.all(
-          batch.map(a => a.resolve(raw).then(r => (r?.url ? r : null)).catch(() => null))
+          batch.map(a => a.resolve(raw).then(r => (r?.url ? { ...r, _adapter: a.name } : null)).catch(() => null))
         );
+
+        // 先找有效 URL
         for (const r of results) {
           if (!r) continue;
           try {
-            const resp = await axios.head(r.url, { timeout: 3000, maxRedirects: 3, validateStatus: () => true });
+            const resp = await axios.head(r.url, { timeout: 1500, maxRedirects: 2, validateStatus: () => true });
             const ct = (resp.headers['content-type'] || '').toLowerCase();
-            if (resp.status < 400 || ct.includes('audio') || ct.includes('octet-stream')) return r;
-          } catch { }
+            if (resp.status < 400 || ct.includes('audio') || ct.includes('octet-stream')) {
+              console.log(`[适配器] ${platform}:${raw.id} → ${(r as any)._adapter} 命中 url=${r.url}`);
+              return r;
+            }
+          } catch {}
         }
-        // 一批全是 null → 平台无版权，快跳
-        if (fastSkip && results.every(r => r === null)) break;
+
+        // 计算连续 null 个数（从头开始）
+        let consecutiveNulls = 0;
+        for (const r of results) {
+          if (r === null) {
+            consecutiveNulls++;
+          } else {
+            break; // 中间断了就不算连续
+          }
+        }
+
+        // fastSkip: 1个null就切  |  切平台: 连续3个null才切
+        if (fastSkip && consecutiveNulls >= 1) {
+          console.log(`[适配器] ${platform}:${raw.id} → 首批null，快跳`);
+          break;
+        }
+        if (!fastSkip && consecutiveNulls >= 3) {
+          console.log(`[适配器] ${platform}:${raw.id} → 连续${consecutiveNulls}个null，切平台`);
+          break;
+        }
       }
-      throw new Error(`All ${adapters.length} APIs failed for track ${raw.id} on ${platform}`);
+      throw new Error(`All adapters failed for track ${raw.id} on ${platform}`);
     },
   };
 }
@@ -113,9 +137,10 @@ const resolvers: Record<Platform, AudioResolver> = {
   kuwo: buildResolverFromList('kuwo', kuwoList),
 };
 
-/** 获取指定平台的 AudioResolver（含配置覆盖优先级） */
+/** 获取指定平台的 AudioResolver（含死源+屏蔽源过滤 + 配置优先级，无 fastSkip） */
 export function getResolver(platform: Platform): AudioResolver {
-  const list = getPlatformList(platform);
+  const excluded = loadExcludedListFor(platform);
+  const list = getPlatformList(platform).filter(a => !excluded.includes(a.name));
   const config = loadPriorityConfig();
   const order = config[platform];
 
@@ -139,10 +164,10 @@ export function getAllAdapters(platform: Platform): AudioApiAdapter[] {
   return getPlatformList(platform);
 }
 
-/** 构建排除死名单的解析器（播放用，启用快跳） */
+/** 构建排除死源+屏蔽源的解析器（播放用，启用快跳） */
 export function getLiveResolver(platform: Platform): AudioResolver {
-  const dead = loadDeadListFor(platform);
-  const list = getPlatformList(platform).filter(a => !dead.includes(a.name));
+  const excluded = loadExcludedListFor(platform);
+  const list = getPlatformList(platform).filter(a => !excluded.includes(a.name));
   const config = loadPriorityConfig();
   const order = config[platform];
   let sorted = [...list];
@@ -153,11 +178,10 @@ export function getLiveResolver(platform: Platform): AudioResolver {
   return buildResolverFromList(platform, sorted, true);
 }
 
-/** 获取排除死名单后的适配器 */
+/** 获取排除死源+屏蔽源后的适配器 */
 export function getLiveAdapters(platform: Platform): AudioApiAdapter[] {
-  const { loadDeadListFor } = require('@/lib/playlist/adapter-config');
-  const dead = loadDeadListFor(platform);
-  return getPlatformList(platform).filter(a => !dead.includes(a.name));
+  const excluded = loadExcludedListFor(platform);
+  return getPlatformList(platform).filter(a => !excluded.includes(a.name));
 }
 
 function getPlatformList(platform: Platform): AudioApiAdapter[] {

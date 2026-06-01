@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Github, Sun, Moon, FlaskConical } from "lucide-react";
+import { Github, Sun, Moon, FlaskConical, Download } from "lucide-react";
 import { useState, MouseEvent } from "react";
 import { useTheme } from "next-themes";
 import DeveloperPanel from "./DeveloperPanel";
@@ -62,6 +62,14 @@ export function Navbar() {
         </Link>
         
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('toggle-coco-download'))}
+            className="p-2 text-slate-400 dark:text-slate-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded-full transition-all duration-300 cursor-pointer"
+            title="下载列表"
+          >
+            <Download className="w-5 h-5" />
+          </button>
+
           <button
             onClick={() => router.push('/api-test')}
             className="p-2 text-slate-400 dark:text-slate-500 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 rounded-full transition-all duration-300 cursor-pointer"

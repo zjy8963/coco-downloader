@@ -180,36 +180,23 @@ export class JianbinProvider implements MusicProvider {
     // 下载路径用 LB 单源轮转，播放路径保持 batch=5 并行
     const useLB = !!ex?._lb;
 
+    // ── 第一轮：各平台适配器链 ──
+    console.log(`[切平台] 歌曲: ${artist} - ${title}  主平台: ${platform}`);
     for (const p of ordered) {
-      // 确定当前平台的歌曲 ID
       let targetSongId: string | undefined;
       if (p === platform) {
-        targetSongId = songId; // 主平台用原始 ID
+        targetSongId = songId;
+        console.log(`[切平台]   ${p}: 主平台原始ID=${songId}`);
       } else if (keyword) {
-        // 切平台：在目标平台精确搜索同名同歌手
         targetSongId = await this.searchExactInPlatform(p, title, artist);
+        console.log(`[切平台]   ${p}: 精确搜索 keyword="${title} ${artist}" → ${targetSongId || '未找到'}`);
       }
 
       if (!targetSongId) {
-        // 没 ID 就跳过适配器链，直接走 jianbin 兜底
-        if (keyword) {
-          try {
-            const result = await this.jianbinSearch(keyword, p);
-            if (result) {
-              const jbsouArtist = (result as any)._artist || '';
-              if (jbsouArtist && artist) {
-                const an = artist.replace(/\s+/g, '').toLowerCase();
-                const jn = jbsouArtist.replace(/\s+/g, '').toLowerCase();
-                if (!jn.includes(an) && !an.includes(jn)) continue;
-              }
-              return await enrichWithLyric(p, songId, title, artist, album, result);
-            }
-          } catch {}
-        }
+        console.log(`[切平台]   ${p}: 跳过（无ID）`);
         continue;
       }
 
-      // A. 该平台的适配器链
       try {
         if (useLB) {
           const { resolveWithLB } = await import('@/lib/adapter-lb');
@@ -219,33 +206,112 @@ export class JianbinProvider implements MusicProvider {
             { id: targetSongId, title, artist, album, raw: ex || {} },
             getAllAdapters(p as 'netease' | 'qq' | 'kugou' | 'kuwo'),
           );
+          console.log(`[切平台]   ${p}: LB解析成功 url=${result.url.substring(0,60)}...`);
           return await enrichWithLyric(p, targetSongId, title, artist, album, result);
         } else {
-          const { getLiveResolver } = await import('@/lib/playlist/resolvers');
-          const resolver = getLiveResolver(p as 'netease' | 'qq' | 'kugou' | 'kuwo');
+          const { getResolver } = await import('@/lib/playlist/resolvers');
+          const resolver = getResolver(p as 'netease' | 'qq' | 'kugou' | 'kuwo');
           const result = await resolver.resolve({ id: targetSongId, title, artist, album, raw: ex || {} });
+          console.log(`[切平台]   ${p}: 解析成功 url=${result.url.substring(0,60)}...`);
           return await enrichWithLyric(p, targetSongId, title, artist, album, result);
         }
-      } catch {}
+      } catch (e) {
+        console.log(`[切平台]   ${p}: 适配器链失败`);
+      }
+    }
 
-      // B. 该平台的 jianbin 兜底
-      if (keyword) {
+    // ── 第二轮：jianbin 兜底（仅非主平台），严格匹配 → 宽松匹配 → 失败 ──
+    if (keyword) {
+      console.log(`[切平台] 进入 jianbin 兜底...`);
+      for (const p of ordered.slice(1)) {
+        const result = await this.jianbinSmartMatch(keyword, p, title, artist);
+        if (result) {
+          const jbsouArtist = (result as any)._artist || '';
+          console.log(`[切平台]   jianbin-${p}: 命中 artist="${jbsouArtist}" url=${result.url.substring(0,60)}...`);
+          return await enrichWithLyric(p, songId, title, artist, album, result);
+        }
+        console.log(`[切平台]   jianbin-${p}: 未命中`);
+      }
+    }
+
+    console.log(`[切平台] ❌ 全部失败`);
+
+    throw new Error(`All platforms exhausted for ${platform}:${id.split(':')[1]}`);
+  }
+
+  /** jianbin 智能匹配：从搜索结果中找严格匹配 → 宽松匹配 → 失败 */
+  private async jianbinSmartMatch(
+    keyword: string, type: string, title: string, artist: string,
+  ): Promise<PlayInfo | null> {
+    try {
+      const params = new URLSearchParams({ input: keyword, filter: 'name', type, page: '1' });
+      const { data } = await axios.post<JbsouSearchResponse>(BASE_URL, params, {
+        headers: SEARCH_HEADERS, timeout: REQUEST_TIMEOUT,
+      });
+      const list = normalizeSearchResponse(data)?.data || [];
+      console.log(`[jianbin] type=${type} keyword="${keyword}" → ${list.length}条结果`);
+      if (list.length === 0) return null;
+
+      const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
+      const nt = norm(title);
+      const na = norm(artist.split('/')[0].trim());
+
+      // 1. 严格匹配
+      const strictMatch = list.find((item: JbsouSearchItem) => {
+        const it = norm(item.name || '');
+        const ia = norm((item.artist || '').split('/')[0].trim());
+        return it === nt && ia === na;
+      });
+      if (strictMatch) {
+        console.log(`[jianbin] ✅ 严格匹配: ${strictMatch.artist} - ${strictMatch.name}`);
+        return await this.buildJianbinResult(strictMatch);
+      }
+
+      // 2. 宽松匹配
+      const looseMatch = list.find((item: JbsouSearchItem) => {
+        const combined = norm((item.name || '') + (item.artist || ''));
+        return combined.includes(nt) && combined.includes(na);
+      });
+      if (looseMatch) {
+        console.log(`[jianbin] ⚠️ 宽松匹配: ${looseMatch.artist} - ${looseMatch.name}`);
+        return await this.buildJianbinResult(looseMatch);
+      }
+
+      console.log(`[jianbin] ❌ 未匹配到 (nt="${nt}" na="${na}")`);
+      for (const item of list.slice(0, 3)) {
+        console.log(`[jianbin]   候选: ${item.artist} - ${item.name}`);
+      }
+      return null;
+    } catch (e) {
+      console.log(`[jianbin] 请求失败: ${e}`);
+      return null;
+    }
+  }
+
+  /** 构建 jianbin 结果（含歌词） */
+  private async buildJianbinResult(item: JbsouSearchItem): Promise<PlayInfo | null> {
+    const downloadUrl = toAbsoluteUrl(item?.url);
+    if (!downloadUrl) return null;
+    const finalUrl = await resolveFinalUrl(downloadUrl);
+    if (!finalUrl.startsWith('http')) return null;
+
+    const result: PlayInfo = { url: finalUrl, type: extractExt(finalUrl) } as any;
+    (result as any)._artist = item?.artist || '';
+
+    if (item?.lrc) {
+      const lrcUrl = toAbsoluteUrl(item.lrc);
+      if (lrcUrl) {
         try {
-          const result = await this.jianbinSearch(keyword, p);
-          if (result) {
-            const jbsouArtist = (result as any)._artist || '';
-            if (jbsouArtist && artist) {
-              const an = artist.replace(/\s+/g, '').toLowerCase();
-              const jn = jbsouArtist.replace(/\s+/g, '').toLowerCase();
-              if (!jn.includes(an) && !an.includes(jn)) continue;
-            }
-            return await enrichWithLyric(p, targetSongId || songId, title, artist, album, result);
+          const lrcResp = await axios.get(lrcUrl, {
+            headers: { 'user-agent': SEARCH_HEADERS['user-agent'] }, timeout: 5000,
+          });
+          if (typeof lrcResp.data === 'string' && lrcResp.data.length > 10) {
+            result.lyric = lrcResp.data;
           }
         } catch {}
       }
     }
-
-    throw new Error(`All platforms exhausted for ${platform}:${id.split(':')[1]}`);
+    return result;
   }
 
   /** jianbin 关键词搜索 → 获取第一条结果的播放 URL（含歌词） */
@@ -297,11 +363,24 @@ export class JianbinProvider implements MusicProvider {
       const searchFn = p === 'netease' ? searchNetease : p === 'qq' ? searchQQ : p === 'kuwo' ? searchKuwo : p === 'kugou' ? searchKugou : undefined;
       if (!searchFn) return undefined;
 
-      const results = await searchFn(`${artist} ${title}`, 5);
+      const results = await searchFn(`${artist} ${title}`, 10);
       const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
-      const match = results.find(r =>
-        norm(r.title) === norm(title) &&
-        norm(r.artist.split('/')[0].trim()) === norm(artist.split('/')[0].trim())
+      const normTitle = norm(title);
+      const normArtist = norm(artist.split('/')[0].trim());
+
+      // 1. 严格匹配：歌名 + 第一歌手完全相同
+      let match = results.find(r =>
+        norm(r.title) === normTitle &&
+        norm(r.artist.split('/')[0].trim()) === normArtist
+      );
+      if (match) return match.id.split(':')[1] || match.id;
+
+      // 2. 歌手+歌名搜索失败时，用纯歌名兜底（处理网易云返回的冗余字符）
+      //    在纯歌名结果中再做严格匹配，不会误匹配
+      const titleOnly = await searchFn(title, 10);
+      match = titleOnly.find(r =>
+        norm(r.title) === normTitle &&
+        norm(r.artist.split('/')[0].trim()) === normArtist
       );
       if (match) return match.id.split(':')[1] || match.id;
     } catch {}

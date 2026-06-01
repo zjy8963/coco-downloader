@@ -123,12 +123,25 @@ export class OfficialSearchProvider implements MusicProvider {
       const searchFn = p === 'netease' ? searchNetease : p === 'qq' ? searchQQ : p === 'kuwo' ? searchKuwo : p === 'kugou' ? searchKugou : undefined;
       if (!searchFn) return undefined;
 
-      const results = await searchFn(`${artist} ${title}`, 5);
-      // 严格匹配：规范化歌名+第一位歌手完全相同
+      const results = await searchFn(`${artist} ${title}`, 10);
       const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
-      const match = results.find(r =>
-        norm(r.title) === norm(title) &&
-        norm(r.artist.split('/')[0].trim()) === norm(artist.split('/')[0].trim())
+      const normTitle = norm(title);
+      const normArtist = norm(artist.split('/')[0].trim());
+
+      // 1. 严格匹配：歌名 + 第一歌手完全相同
+      let match = results.find(r =>
+        norm(r.title) === normTitle &&
+        norm(r.artist.split('/')[0].trim()) === normArtist
+      );
+      if (match) {
+        return match.id.split(':')[1] || match.id;
+      }
+
+      // 2. 纯歌名兜底（网易云歌单 API 返回的歌手名可能含冗余字符）
+      const titleOnly = await searchFn(title, 10);
+      match = titleOnly.find(r =>
+        norm(r.title) === normTitle &&
+        norm(r.artist.split('/')[0].trim()) === normArtist
       );
       if (match) {
         return match.id.split(':')[1] || match.id;

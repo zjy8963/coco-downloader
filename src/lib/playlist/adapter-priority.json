@@ -8,27 +8,27 @@
   ],
   "netease": [
     "xuanluoge",
+    "xianyuw",
     "vincentzyu233",
     "nanorocky",
-    "xianyuw",
     "gdstudio",
-    "jfjt",
-    "xiaoqin",
-    "yutangxiaowu",
+    "guyuei",
     "qjqq",
-    "xcvts",
+    "jfjt",
+    "yutangxiaowu",
     "manshuo",
-    "cunyu",
+    "xcvts",
     "znnu",
     "xingmian",
-    "guyuei",
-    "317ak",
+    "cunyu",
     "bugpk",
     "kangqiovo",
-    "luosu",
     "xiaot",
+    "xiaoqin",
     "haitangw",
     "xunjinlu",
+    "luosu",
+    "317ak",
     "cgg",
     "nycnmbyfuns",
     "ceseet",
@@ -39,34 +39,36 @@
   ],
   "qq": [
     "xianyuw",
+    "xcvts",
     "xunhuisi",
     "317ak",
+    "tang",
+    "nki",
     "vkeys",
     "lxmusic",
     "cyapi",
-    "tang",
-    "xcvts",
     "liuyunidc",
     "ygking",
     "lpz",
-    "nki",
     "luoyue"
   ],
   "kuwo": [
-    "yyy001",
     "haitangw",
-    "lxmusic",
+    "yyy001",
     "nxinxz",
     "ceseet",
-    "cgg",
-    "ccwu",
-    "guyuei",
     "gdstudio",
+    "ccwu",
+    "lxmusic",
+    "cgg",
+    "guyuei",
     "yibai"
   ],
   "_dead": {
     "netease": [
-      "cgg",
+      "xiaoqin",
+      "haitangw",
+      "xunjinlu",
       "nycnmbyfuns",
       "ceseet",
       "tmetu",
@@ -78,7 +80,6 @@
       "liuyunidc",
       "ygking",
       "lpz",
-      "nki",
       "luoyue"
     ],
     "kugou": [
@@ -86,8 +87,43 @@
       "liuyunidc"
     ],
     "kuwo": [
-      "gdstudio",
       "yibai"
     ]
+  },
+  "_autoRevive": {
+    "netease": true,
+    "qq": true,
+    "kugou": true,
+    "kuwo": true
+  },
+  "_autoReviveInterval": {
+    "netease": {
+      "value": 60,
+      "unit": "minutes"
+    },
+    "qq": {
+      "value": 60,
+      "unit": "minutes"
+    },
+    "kugou": {
+      "value": 60,
+      "unit": "minutes"
+    },
+    "kuwo": {
+      "value": 60,
+      "unit": "minutes"
+    }
+  },
+  "_blocked": {
+    "netease": [
+      "luosu",
+      "317ak"
+    ],
+    "kuwo": []
+  },
+  "_ui": {
+    "concurrency": 5,
+    "timeoutMs": 8000,
+    "sortMode": "quality"
   }
 }

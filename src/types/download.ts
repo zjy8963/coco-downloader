@@ -10,4 +10,5 @@ export interface DownloadTask {
   fileName: string;
   error?: string;
   startTime: number;
+  finishedTime?: number; // 完成或失败的时间戳，用于按完成时间倒排
 }
