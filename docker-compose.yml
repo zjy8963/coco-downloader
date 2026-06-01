@@ -14,5 +14,3 @@ services:
     # 下载目录（NAS 挂载）
     volumes:
       - /mnt/nas/music:/app/downloads
-      # 适配器配置持久化
-      - ./src/lib/playlist/adapter-priority.json:/app/src/lib/playlist/adapter-priority.json
